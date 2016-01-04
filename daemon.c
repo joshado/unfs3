@@ -11,6 +11,7 @@
 #include <sys/file.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#define PORTMAP
 #include <rpc/rpc.h>
 #include <rpc/pmap_clnt.h>
 
@@ -32,6 +33,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <stropts.h>
 #include <errno.h>
 
 #ifdef HAVE_RPC_SVC_SOC_H
@@ -354,6 +356,7 @@ void daemon_exit(int error)
 	svc_unregister(NFS3_PROGRAM, NFS_V3);
     }
 
+
     if (error == SIGSEGV)
 	logmsg(LOG_EMERG, "segmentation fault");
 
@@ -653,146 +656,6 @@ static void mountprog_3(struct svc_req *rqstp, register SVCXPRT * transp)
     return;
 }
 
-static void register_nfs_service(SVCXPRT * udptransp, SVCXPRT * tcptransp)
-{
-    if (opt_portmapper) {
-	pmap_unset(NFS3_PROGRAM, NFS_V3);
-    }
-
-    if (udptransp != NULL) {
-	/* Register NFS service for UDP */
-	if (!svc_register
-	    (udptransp, NFS3_PROGRAM, NFS_V3, nfs3_program_3,
-	     opt_portmapper ? IPPROTO_UDP : 0)) {
-	    fprintf(stderr, "%s\n",
-		    "unable to register (NFS3_PROGRAM, NFS_V3, udp).");
-	    daemon_exit(0);
-	}
-    }
-
-    if (tcptransp != NULL) {
-	/* Register NFS service for TCP */
-	if (!svc_register
-	    (tcptransp, NFS3_PROGRAM, NFS_V3, nfs3_program_3,
-	     opt_portmapper ? IPPROTO_TCP : 0)) {
-	    fprintf(stderr, "%s\n",
-		    "unable to register (NFS3_PROGRAM, NFS_V3, tcp).");
-	    daemon_exit(0);
-	}
-    }
-}
-
-static void register_mount_service(SVCXPRT * udptransp, SVCXPRT * tcptransp)
-{
-    if (opt_portmapper) {
-	pmap_unset(MOUNTPROG, MOUNTVERS1);
-	pmap_unset(MOUNTPROG, MOUNTVERS3);
-    }
-
-    if (udptransp != NULL) {
-	/* Register MOUNT service (v1) for UDP */
-	if (!svc_register
-	    (udptransp, MOUNTPROG, MOUNTVERS1, mountprog_3,
-	     opt_portmapper ? IPPROTO_UDP : 0)) {
-	    fprintf(stderr, "%s\n",
-		    "unable to register (MOUNTPROG, MOUNTVERS1, udp).");
-	    daemon_exit(0);
-	}
-
-	/* Register MOUNT service (v3) for UDP */
-	if (!svc_register
-	    (udptransp, MOUNTPROG, MOUNTVERS3, mountprog_3,
-	     opt_portmapper ? IPPROTO_UDP : 0)) {
-	    fprintf(stderr, "%s\n",
-		    "unable to register (MOUNTPROG, MOUNTVERS3, udp).");
-	    daemon_exit(0);
-	}
-    }
-
-    if (tcptransp != NULL) {
-	/* Register MOUNT service (v1) for TCP */
-	if (!svc_register
-	    (tcptransp, MOUNTPROG, MOUNTVERS1, mountprog_3,
-	     opt_portmapper ? IPPROTO_TCP : 0)) {
-	    fprintf(stderr, "%s\n",
-		    "unable to register (MOUNTPROG, MOUNTVERS1, tcp).");
-	    daemon_exit(0);
-	}
-
-	/* Register MOUNT service (v3) for TCP */
-	if (!svc_register
-	    (tcptransp, MOUNTPROG, MOUNTVERS3, mountprog_3,
-	     opt_portmapper ? IPPROTO_TCP : 0)) {
-	    fprintf(stderr, "%s\n",
-		    "unable to register (MOUNTPROG, MOUNTVERS3, tcp).");
-	    daemon_exit(0);
-	}
-    }
-}
-
-static SVCXPRT *create_udp_transport(unsigned int port)
-{
-    SVCXPRT *transp = NULL;
-    struct sockaddr_in sin;
-    int sock;
-    const int on = 1;
-
-    if (port == 0)
-	sock = RPC_ANYSOCK;
-    else {
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(port);
-	sin.sin_addr.s_addr = opt_bind_addr.s_addr;
-	sock = socket(PF_INET, SOCK_DGRAM, 0);
-	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *) &on, sizeof(on));
-	if (bind(sock, (struct sockaddr *) &sin, sizeof(struct sockaddr))) {
-	    perror("bind");
-	    fprintf(stderr, "Couldn't bind to udp port %d\n", port);
-	    exit(1);
-	}
-    }
-
-    transp = svcudp_bufcreate(sock, NFS_MAX_UDP_PACKET, NFS_MAX_UDP_PACKET);
-
-    if (transp == NULL) {
-	fprintf(stderr, "%s\n", "cannot create udp service.");
-	daemon_exit(0);
-    }
-
-    return transp;
-}
-
-static SVCXPRT *create_tcp_transport(unsigned int port)
-{
-    SVCXPRT *transp = NULL;
-    struct sockaddr_in sin;
-    int sock;
-    const int on = 1;
-
-    if (port == 0)
-	sock = RPC_ANYSOCK;
-    else {
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(port);
-	sin.sin_addr.s_addr = opt_bind_addr.s_addr;
-	sock = socket(PF_INET, SOCK_STREAM, 0);
-	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *) &on, sizeof(on));
-	if (bind(sock, (struct sockaddr *) &sin, sizeof(struct sockaddr))) {
-	    perror("bind");
-	    fprintf(stderr, "Couldn't bind to tcp port %d\n", port);
-	    exit(1);
-	}
-    }
-
-    transp = svctcp_create(sock, 0, 0);
-
-    if (transp == NULL) {
-	fprintf(stderr, "%s\n", "cannot create tcp service.");
-	daemon_exit(0);
-    }
-
-    return transp;
-}
 
 /* Run RPC service. This is our own implementation of svc_run(), which
    allows us to handle other events as well. */
@@ -806,7 +669,7 @@ static void unfs3_svc_run(void)
 #endif
 
     for (;;) {
-	fd_cache_close_inactive();
+      fd_cache_close_inactive();
 
 #ifdef HAVE_SVC_GETREQ_POLL
 	r = poll(svc_pollfd, svc_max_pollfd, 2*1000);
@@ -866,6 +729,18 @@ void change_readdir_cookie(void)
     rcookie = rcookie << 32;
 }
 
+static void nfs_dispatch(struct svc_req *rqstp, SVCXPRT *transp)
+{
+	printf("Dispatching NFS request\n");
+}
+
+static void mount_dispatch(struct svc_req *rqstp, SVCXPRT *transp)
+{
+
+	printf("Dispatching MOUNT request\n");
+
+}
+
 /*
  * NFSD main function
  * originally generated by rpcgen
@@ -879,15 +754,15 @@ int main(int argc, char **argv)
 #ifndef WIN32
     struct sigaction act;
     sigset_t actset;
-#endif				       /* WIN32 */
+#endif               /* WIN32 */
     int res;
 
     opt_bind_addr.s_addr = INADDR_ANY;
 
     parse_options(argc, argv);
     if (optind < argc) {
-	fprintf(stderr, "Error: extra arguments on command line\n");
-	exit(1);
+      fprintf(stderr, "Error: extra arguments on command line\n");
+      exit(1);
     }
 
     /* init write verifier */
@@ -895,45 +770,33 @@ int main(int argc, char **argv)
 
     res = backend_init();
     if (res == -1) {
-	fprintf(stderr, "backend initialization failed\n");
-	daemon_exit(0);
+      fprintf(stderr, "backend initialization failed\n");
+      daemon_exit(0);
     }
 
     /* config test mode */
     if (opt_testconfig) {
-	res = exports_parse();
-	if (res) {
-	    exit(0);
-	} else {
-	    fprintf(stderr, "Parse error in `%s'\n", opt_exports);
-	    exit(1);
-	}
+      res = exports_parse();
+      if (res) {
+          exit(0);
+      } else {
+          fprintf(stderr, "Parse error in `%s'\n", opt_exports);
+          exit(1);
+      }
     }
 
     if (opt_detach) {
-	/* prepare syslog access */
-	openlog("unfsd", LOG_CONS | LOG_PID, LOG_DAEMON);
+      /* prepare syslog access */
+      openlog("unfsd", LOG_CONS | LOG_PID, LOG_DAEMON);
     } else {
-	/* flush stdout after each newline */
-	setvbuf(stdout, NULL, _IOLBF, 0);
+      /* flush stdout after each newline */
+      setvbuf(stdout, NULL, _IOLBF, 0);
     }
 
-    /* NFS transports */
-    if (!opt_tcponly)
-	udptransp = create_udp_transport(opt_nfs_port);
-    tcptransp = create_tcp_transport(opt_nfs_port);
-
-    register_nfs_service(udptransp, tcptransp);
-
-    /* MOUNT transports. If ports are equal, then the MOUNT service can reuse 
-       the NFS transports. */
-    if (opt_mount_port != opt_nfs_port) {
-	if (!opt_tcponly)
-	    udptransp = create_udp_transport(opt_mount_port);
-	tcptransp = create_tcp_transport(opt_mount_port);
-    }
-
-    register_mount_service(udptransp, tcptransp);
+    svc_create(nfs3_program_3, NFS3_PROGRAM, NFS_V3, "udp");
+    svc_create(mountprog_3, MOUNTPROG, MOUNTVERS3, "udp");
+		svc_create(nfs3_program_3, NFS3_PROGRAM, NFS_V3, "tcp");
+    svc_create(mountprog_3, MOUNTPROG, MOUNTVERS3, "tcp");
 
 #ifndef WIN32
     if (opt_detach) {
@@ -986,6 +849,7 @@ int main(int argc, char **argv)
 	fd_cache_init();
 	get_squash_ids();
 	exports_parse();
+	svc_run();
 
 	unfs3_svc_run();
 	exit(1);
